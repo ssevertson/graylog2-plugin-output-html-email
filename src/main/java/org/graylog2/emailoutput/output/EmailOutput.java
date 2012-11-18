@@ -141,8 +141,22 @@ public class EmailOutput implements MessageOutput {
         }
 
         email.setSubject(subject);
-        email.setMsg(msg.getFullMessage());
+        email.setMsg(buildEmailText(msg));
         email.send();
+    }
+ 
+    private String buildEmailText(LogMessage msg) {
+        StringBuilder sb = new StringBuilder();
+
+        sb.append(msg.getShortMessage());
+        
+        if (msg.getFullMessage() != null) {
+            sb.append("\n\n").append(msg.getFullMessage());
+        }
+
+        sb.append("\n\n------\n\n").append(msg.toString());
+        
+        return sb.toString();
     }
     
 }
