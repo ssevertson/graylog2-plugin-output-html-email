@@ -61,8 +61,11 @@ public class EmailOutput implements MessageOutput {
         for (LogMessage msg : messages) {
             for (Stream stream : msg.getStreams()) {
                 Set<Map<String, String>> configuredOutputs = streamConfiguration.get(stream.getId());
-                for (Map<String, String> config : configuredOutputs) {
-                    sendMail(msg, config.get("receiver"), config.get("subject"));
+
+                if (configuredOutputs != null) {
+                    for (Map<String, String> config : configuredOutputs) {
+                        sendMail(msg, config.get("receiver"), config.get("subject"));
+                    }
                 }
             }
         }
@@ -116,7 +119,7 @@ public class EmailOutput implements MessageOutput {
         if (receiver == null || receiver.isEmpty()) { throw new EmailException("Missing configuration: receiver"); }
         
         if (subject == null || subject.isEmpty()) { throw new EmailException("Missing configuration: subject"); }
-        
+
         SimpleEmail email = new SimpleEmail();
 
         email.setHostName(configuration.get("hostname"));
@@ -130,7 +133,6 @@ public class EmailOutput implements MessageOutput {
         }
 
         email.setFrom(configuration.get("from_email"), configuration.get("from_name"));
-
         
         email.addTo(receiver);
 
@@ -142,6 +144,7 @@ public class EmailOutput implements MessageOutput {
 
         email.setSubject(subject);
         email.setMsg(buildEmailText(msg));
+
         email.send();
     }
  

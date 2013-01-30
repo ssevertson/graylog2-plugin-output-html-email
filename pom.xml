@@ -29,7 +29,7 @@
     <dependency>
       <groupId>org.graylog2</groupId>
       <artifactId>graylog2-plugin</artifactId>
-      <version>0.10.3</version>
+      <version>0.10.12</version>
     </dependency>
   </dependencies>
 
