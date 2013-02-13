@@ -140,7 +140,7 @@ public class HtmlEmailLayout implements EmailLayout
     private String getISO8601FormattedTimestamp(LogMessage msg) {
         double createdAt = msg.getCreatedAt();
         Calendar cal = Calendar.getInstance();
-        cal.setTimeInMillis((long) createdAt);
+        cal.setTimeInMillis((long) (createdAt * 1000));
         return ISO_8601_DATE_FORMAT.get().format(cal.getTime());
     }
     
