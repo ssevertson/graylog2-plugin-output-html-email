@@ -20,13 +20,24 @@
 
 package org.graylog2.emailoutput.output;
 
-import java.util.HashMap;
-import java.util.HashSet;
+import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import org.apache.commons.mail.EmailException;
-import org.apache.commons.mail.SimpleEmail;
+
+import javax.mail.MessagingException;
+import javax.mail.NoSuchProviderException;
+import javax.mail.Session;
+import javax.mail.Transport;
+import javax.mail.internet.AddressException;
+import javax.mail.internet.InternetAddress;
+
+import org.graylog2.emailoutput.output.html.HtmlEmailLayout;
 import org.graylog2.plugin.GraylogServer;
 import org.graylog2.plugin.logmessage.LogMessage;
 import org.graylog2.plugin.outputs.MessageOutput;
@@ -36,44 +47,15 @@ import org.graylog2.plugin.streams.Stream;
 
 /**
  * @author Lennart Koopmann <lennart@socketfeed.com>
+ * @author Scott Severtson <ssevertson@digitalmeasures.com>
  */
 public class EmailOutput implements MessageOutput {
-
-    private static final String NAME = "Email output";
     
-    private Map<String, String> configuration;
-    
-    public static final Set<String> REQUIRED_FIELDS = new HashSet<String>() {{ 
-        add("hostname");
-        add("port");
-        add("use_tls");
-        add("use_auth");
-        add("from_email");
-        add("from_name");
-    }};
-    
-    public void initialize(Map<String, String> configuration) throws MessageOutputConfigurationException {
-        this.configuration = configuration;
-        checkConfiguration();
-    }
-    
-    public void write(List<LogMessage> messages, OutputStreamConfiguration streamConfiguration, GraylogServer server) throws Exception {
-        for (LogMessage msg : messages) {
-            for (Stream stream : msg.getStreams()) {
-                Set<Map<String, String>> configuredOutputs = streamConfiguration.get(stream.getId());
+    private static final String PLUGIN_NAME = "Email output";
 
-                if (configuredOutputs != null) {
-                    for (Map<String, String> config : configuredOutputs) {
-                        sendMail(msg, config.get("receiver"), config.get("subject"));
-                    }
-                }
-            }
-        }
-    }
-
-    public Map<String, String> getRequestedConfiguration() {
-        Map<String, String> config = new HashMap<String, String>();
-
+    private static final Map<String, String> FIELDS_PLUGIN_CONFIG;
+    static {
+        Map<String, String> config = new LinkedHashMap<String, String>();
         config.put("from_email", "Email address of sender");
         config.put("from_name", "Name of sender");
         config.put("hostname", "SMTP Hostname");
@@ -82,84 +64,150 @@ public class EmailOutput implements MessageOutput {
         config.put("use_auth", "Use authentication? (true/false)");
         config.put("username", "SMTP username");
         config.put("password", "SMTP password");
-        
-        return config;
+        config.put("web_interface_url", "Web Interface URL (for links)");
+        FIELDS_PLUGIN_CONFIG = Collections.unmodifiableMap(config);
     }
+    private static final Collection<String> FIELDS_PLUGIN_REQUIRED = Collections.unmodifiableCollection(Arrays.asList( 
+            "from_email",
+            "from_name",
+            "hostname",
+            "port",
+            "use_tls",
+            "use_auth"));
     
-    public Map<String, String> getRequestedStreamConfiguration() {
-        Map<String, String> config = new HashMap<String, String>();
-        
+    private static final Map<String, String> FIELDS_STREAM_CONFIG;
+    static {
+        Map<String, String> config = new LinkedHashMap<String, String>();
         config.put("receiver", "Receiver email address");
         config.put("subject", "Email subject");
-        
-        return config;
+        config.put("fields", "Include fields (regex)");
+        FIELDS_STREAM_CONFIG = Collections.unmodifiableMap(config);
     }
+    private static final Collection<String> FIELDS_STREAM_REQUIRED = Collections.unmodifiableCollection(Arrays.asList( 
+            "receiver",
+            "subject"));
 
-    public String getName() {
-        return NAME;
-    }
     
-    private void checkConfiguration() throws MessageOutputConfigurationException {
-        for (String field : REQUIRED_FIELDS) {
-            if (!configSet(configuration, field)) { throw new MessageOutputConfigurationException("Missing configuration option: " + field); }
-        }
+    private Map<String, String> configuration;
+    private Session session;
+    private InternetAddress from;
+    private EmailLayout layout = new HtmlEmailLayout();
+    
+    
+    public String getName() {
+        return PLUGIN_NAME;
+    }
+    public Map<String, String> getRequestedConfiguration() {
+        return FIELDS_PLUGIN_CONFIG;
+    }
+    private void checkPluginConfiguration(Map<String, String> configuration) throws MessageOutputConfigurationException {
+        checkRequiredFields(configuration, FIELDS_PLUGIN_REQUIRED);
         
         if (configuration.get("use_auth").equals("true")) {
             if (!configSet(configuration, "username")) { throw new MessageOutputConfigurationException("Missing configuration option: username"); }
             if (!configSet(configuration, "password")) { throw new MessageOutputConfigurationException("Missing configuration option: password"); }
         }
     }
-    
+    public Map<String, String> getRequestedStreamConfiguration() {
+        return FIELDS_STREAM_CONFIG;
+    }
+    private void checkStreamConfiguration(Map<String, String> configuration) throws MessageOutputConfigurationException {
+        checkRequiredFields(configuration, FIELDS_STREAM_REQUIRED);
+    }
+
+   private void checkRequiredFields(Map<String, String> configuration, Collection<String> requiredFields) throws MessageOutputConfigurationException {
+        for (String field : requiredFields) {
+            if (!configSet(configuration, field)) {
+                throw new MessageOutputConfigurationException("Missing configuration option: " + field);
+            }
+        }
+    }
     private boolean configSet(Map<String, String> target, String key) {
         return target != null && target.containsKey(key)
                 && target.get(key) != null && !target.get(key).isEmpty();
     }
 
-    private void sendMail(LogMessage msg, String receiver, String subject) throws EmailException {
-        if (receiver == null || receiver.isEmpty()) { throw new EmailException("Missing configuration: receiver"); }
+    
+    public void initialize(Map<String, String> pluginConfiguration) throws MessageOutputConfigurationException {
         
-        if (subject == null || subject.isEmpty()) { throw new EmailException("Missing configuration: subject"); }
+        checkPluginConfiguration(pluginConfiguration);
+        this.configuration = pluginConfiguration;
+        
+        this.session = JavaMailUtil.buildSession(
+                pluginConfiguration.get("protocol"),
+                Boolean.parseBoolean(pluginConfiguration.get("use_auth")),
+                Boolean.parseBoolean(pluginConfiguration.get("use_tls")));
+        
+        this.from = toAddress(pluginConfiguration.get("from_email"), pluginConfiguration.get("from_name"));
+        
+        this.layout.initialize(pluginConfiguration);
+    }
 
-        SimpleEmail email = new SimpleEmail();
-
-        email.setHostName(configuration.get("hostname"));
-        email.setSmtpPort(Integer.parseInt(configuration.get("port")));
-
-        if (configuration.get("use_auth").equals("true")) {
-            email.setAuthentication(configuration.get("username"), configuration.get("password"));
-            if (configuration.get("use_tls").equals("true")) {
-                email.setTLS(true);
+    public void write(List<LogMessage> messages, OutputStreamConfiguration streamConfiguration, GraylogServer server) throws Exception {
+        
+        Transport transport = null;
+        try {
+            for (LogMessage msg : messages) {
+                for (Stream stream : msg.getStreams()) {
+                    Set<Map<String, String>> configuredOutputs = streamConfiguration.get(stream.getId());
+    
+                    if (configuredOutputs != null && !configuredOutputs.isEmpty()) {
+                        
+                        for (Map<String, String> config : configuredOutputs) {
+                            
+                            transport = sendMessage(transport, msg, config);
+                        }
+                    }
+                }
+            }
+        } finally {
+            if(null != transport) {
+                transport.close();
             }
         }
-
-        email.setFrom(configuration.get("from_email"), configuration.get("from_name"));
-        
-        email.addTo(receiver);
-
-        String subjectPrefix = configuration.get("subject_prefix");
-
-        if (subjectPrefix != null && !subjectPrefix.isEmpty()) {
-            subject = subjectPrefix + " " + subject;
-        }
-
-        email.setSubject(subject);
-        email.setMsg(buildEmailText(msg));
-
-        email.send();
     }
- 
-    private String buildEmailText(LogMessage msg) {
-        StringBuilder sb = new StringBuilder();
-
-        sb.append(msg.getShortMessage());
+    public Transport sendMessage(Transport transport, LogMessage message, Map<String, String> streamConfig)
+            throws MessageOutputConfigurationException, NoSuchProviderException, MessagingException, IOException {
+    	
+        checkStreamConfiguration(streamConfig);
         
-        if (msg.getFullMessage() != null) {
-            sb.append("\n\n").append(msg.getFullMessage());
+        if(null == transport) {
+            transport = JavaMailUtil.buildTransport(
+                    session,
+                    configuration.get("hostname"),
+                    Integer.parseInt(configuration.get("port")),
+                    Boolean.parseBoolean(configuration.get("use_auth")),
+                    configuration.get("username"),
+                    configuration.get("password"));
         }
-
-        sb.append("\n\n------\n\n").append(msg.toString());
         
-        return sb.toString();
+        MimeUtil.sendMessage(
+                session,
+                transport,
+                from,
+                toAddress(streamConfig.get("receiver")),
+                layout.getSubject(message, streamConfig),
+                layout.formatMessageBody(message, streamConfig),
+                layout.getContentType());
+        return transport;
+    }
+
+
+    private InternetAddress toAddress(String email, String name) throws MessageOutputConfigurationException {
+        try {
+            InternetAddress address = toAddress(email);
+            address.setPersonal(name);
+            return address;
+        } catch (UnsupportedEncodingException e) {
+            throw new MessageOutputConfigurationException("Could not encode name: " + name + "; " + e.getMessage());
+        }
     }
     
+    private InternetAddress toAddress(String email) throws MessageOutputConfigurationException {
+        try {
+            return new InternetAddress(email);
+        } catch(AddressException e) {
+            throw new MessageOutputConfigurationException("Could not parse email address: " + email + "; " + e.getMessage());
+        }
+    }
 }
