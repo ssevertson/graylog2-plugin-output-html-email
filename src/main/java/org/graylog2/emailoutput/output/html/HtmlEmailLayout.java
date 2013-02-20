@@ -85,7 +85,7 @@ public class HtmlEmailLayout implements EmailLayout
             sb.append(SEPARATOR);
         }
         
-        sb.append(encodeAsHTML(getMessageText(msg))).append("<br/>\n");
+        sb.append(HtmlUtil.encode(getMessageText(msg))).append("<br/>\n");
         sb.append(SEPARATOR);
         
         Pattern fieldPattern = compilePattern(streamConfiguration.get("fields"));
@@ -145,55 +145,10 @@ public class HtmlEmailLayout implements EmailLayout
     }
     
 
-    private CharSequence encodeAsHTML(CharSequence string) {
-        if (string == null || string.length() == 0) return string;
-
-        StringBuilder result = null;
-        boolean found = false;
-
-        int length = string.length();
-        for (int i = 0; i < length; i++) {
-            char c = string.charAt(i);
-            
-            String replacement = getHtmlReplacement(c);
-            
-            if (null != replacement) {
-                if (!found) {
-                    found = true;
-                    // Over-allocate initial StringBuilder so we're less likely to require expansion later.
-                    result = new StringBuilder(length + (replacement.length() * 8));
-                    if (i > 0) {
-                        result.append(string, 0, i);
-                    }
-                }
-                result.append(replacement);
-            } else if (found) {
-                result.append(c);
-            }
-        }
-        return found
-                ? result
-                : string;
-    }
-    
-    private String getHtmlReplacement(char c) {
-        switch(c) {
-            case '<':  return "&lt;";
-            case '>':  return "&gt;";
-            case '&':  return "&amp;";
-            case '"':  return "&quot;";
-            case '\'': return "&#39;";
-            case '\r': return "";
-            case '\n': return "<br/>\n";
-            case '\t': return "&nbsp;&nbsp;&nbsp;&nbsp;";
-            default:   return null;
-        }
-    }
-
     private void appendHTMLKeyValue(StringBuilder sb, String key, Object value) {
         sb.append("<tr>\n");
         sb.append("<th align=\"left\">").append(key).append("</th>\n");
-        sb.append("<td>").append(encodeAsHTML(String.valueOf(value))).append("</td>\n");
+        sb.append("<td>").append(HtmlUtil.encode(String.valueOf(value))).append("</td>\n");
         sb.append("</tr>\n");
     }
 }

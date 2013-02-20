@@ -22,6 +22,11 @@
       <scope>test</scope>
     </dependency>
     <dependency>
+      <groupId>javax.mail</groupId>
+      <artifactId>mail</artifactId>
+      <version>1.4.5</version>
+    </dependency>
+    <dependency>
       <groupId>org.graylog2</groupId>
       <artifactId>graylog2-plugin</artifactId>
       <version>0.10.12</version>
